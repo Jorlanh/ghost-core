@@ -33,6 +33,7 @@ public class ApiConfig {
     @Column(name = "priority_level")
     private Integer priorityLevel;
 
+    @Builder.Default
     @Column(name = "is_active")
     private Boolean isActive = true;
 

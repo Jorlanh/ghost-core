@@ -13,7 +13,7 @@ import java.util.UUID;
 @AllArgsConstructor
 @Builder
 public class IntentLog {
-
+    
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
@@ -33,12 +33,15 @@ public class IntentLog {
 
     private Integer tokensUsed;
 
+    @Builder.Default
     private Boolean success = true;
 
     private String errorMessage;
 
+    @Builder.Default
     private Boolean memoryStored = false;
 
+    @Builder.Default
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
 }
