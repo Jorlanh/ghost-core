@@ -23,14 +23,17 @@ public class GhostController {
     private final DeviceControlService deviceService;
     private final TtsService ttsService;
 
-    public record InteractionRequest(String command, String uid) {}
+    // Novo payload recebe o clientSource para Roteamento Híbrido
+    public record InteractionRequest(String command, String uid, String clientSource) {}
+
+    // Objeto interno para devolver texto falado e comando de máquina simultaneamente
+    private record CommandResult(String text, String osCommand) {}
 
     @PostMapping("/interact")
     public ResponseEntity<Map<String, Object>> interact(@RequestBody InteractionRequest request) {
         String rawCommand = request.command() != null ? request.command().trim() : "";
         String lowerCommand = rawCommand.toLowerCase();
 
-        // Identificação dinâmica do nickname
         String nickname = "Visitante";
         boolean isGodMode = request.uid() != null && !request.uid().isBlank();
 
@@ -39,124 +42,137 @@ public class GhostController {
             nickname = "Senhor " + (uidClean.isEmpty() ? "Usuário" : capitalizeFirst(uidClean));
         }
 
-        // Processa o comando e gera a resposta textual
-        String responseText = processCommand(lowerCommand, rawCommand, nickname, isGodMode, request.uid());
+        // Processa o comando com a matriz de decisão
+        CommandResult result = processCommand(lowerCommand, rawCommand, nickname, isGodMode, request);
 
-        // Gera áudio neural (uma única chamada no final)
-        String audioUrl = ttsService.synthesize(responseText);
+        // Gera áudio neural (em bloco try/catch para não quebrar se a API falhar)
+        String audioUrl = "";
+        try {
+            audioUrl = ttsService.synthesize(result.text());
+        } catch (Exception e) {
+            log.error("TTS falhou. Fallback para síntese nativa do browser.");
+        }
 
         return ResponseEntity.ok(Map.of(
-            "response", responseText,
+            "response", result.text(),
             "user", nickname,
             "audioUrl", audioUrl != null ? audioUrl : "",
+            "osCommand", result.osCommand(), // O Electron reage a esta variável!
             "status", "SUCCESS"
         ));
     }
 
-    private String processCommand(String lowerCommand, String rawCommand, String nickname, boolean isGodMode, String uid) {
+    private CommandResult processCommand(String lowerCommand, String rawCommand, String nickname, boolean isGodMode, InteractionRequest request) {
         if (!isGodMode) {
-            return intelligenceService.getAiResponse(rawCommand, nickname, false, uid);
+            return new CommandResult(intelligenceService.getAiResponse(rawCommand, nickname, false, request.uid()), "");
         }
 
-        // Confirmações variadas para god mode
         String[] confirmPhrases = {
             "É pra já, " + nickname + ".",
             "Deixa comigo, " + nickname + ".",
             "Imediatamente, meu senhor.",
-            "Já estou executando, " + nickname + ".",
-            "Considere feito, chefe.",
-            "Na hora, " + nickname + ".",
-            "Como ordenado, " + nickname + ".",
-            "Sem demora, Senhor " + nickname + "."
+            "Já estou executando, " + nickname + "."
         };
         String confirmation = confirmPhrases[(int)(Math.random() * confirmPhrases.length)];
 
+        // Identifica quem enviou o comando (ELECTRON, WEB, MOBILE)
+        String client = request.clientSource() != null ? request.clientSource().toUpperCase() : "WEB";
+        
         String actionResult = "";
         String conclusion = "Pronto, " + nickname + ". Algo mais?";
+        String osAction = ""; // O comando que será enviado ao Electron
 
+        // ---------------------------------------------------------
+        // MATRIZ DE DECISÃO HÍBRIDA (PC / SISTEMA OPERACIONAL)
+        // ---------------------------------------------------------
         if (lowerCommand.startsWith("execute no pc") || lowerCommand.startsWith("rode no pc") || lowerCommand.startsWith("faça no pc")) {
             String prefix = getPrefix(lowerCommand, new String[]{"execute no pc", "rode no pc", "faça no pc"});
             String subCmd = rawCommand.substring(prefix.length()).trim();
             boolean ps = subCmd.toLowerCase().contains("powershell") || subCmd.toLowerCase().contains("ps1");
 
-            actionResult = deviceService.executeWindowsCommand(subCmd, ps);
-            conclusion = actionResult.contains("Sucesso") || actionResult.contains("OK")
-                ? "Feito e bem feito, " + nickname + ". Comando executado."
-                : "Houve uma interrupção, " + nickname + ". Detalhes: " + actionResult;
-        }
-        else if (lowerCommand.startsWith("execute no android") || lowerCommand.startsWith("rode no android") || lowerCommand.startsWith("faça no android")) {
-            String prefix = getPrefix(lowerCommand, new String[]{"execute no android", "rode no android", "faça no android"});
-            String subCmd = rawCommand.substring(prefix.length()).trim();
-
-            actionResult = deviceService.executeAdbCommand(subCmd);
-            conclusion = actionResult.contains("OK") || actionResult.contains("success")
-                ? "Link neural confirmado, " + nickname + ". Tudo certo no celular."
-                : "Problema no Android, " + nickname + ": " + actionResult;
-        }
-        else if (lowerCommand.startsWith("execute no ios") || lowerCommand.startsWith("rode no ios") || lowerCommand.startsWith("faça no ios")) {
-            String prefix = getPrefix(lowerCommand, new String[]{"execute no ios", "rode no ios", "faça no ios"});
-            String shortcut = rawCommand.substring(prefix.length()).trim();
-
-            actionResult = deviceService.triggerIosShortcut(shortcut, "https://pushcut.io/seu-webhook-aqui");
-            conclusion = "Sinal enviado ao iPhone. Protocolo concluído, " + nickname + ".";
-        }
-        else if (lowerCommand.contains("modo defesa") || lowerCommand.contains("intruso") || lowerCommand.contains("lockdown")) {
-            actionResult = deviceService.activateDefenseMode();
-            return "Iniciando lockdown agora mesmo, " + nickname + ".\n" +
-                   actionResult + "\n" +
-                   "Sistema seguro. Estou de guarda total, meu senhor.";
+            if (client.equals("ELECTRON")) {
+                osAction = ps ? "powershell -Command \"" + subCmd + "\"" : subCmd;
+                conclusion = "Delegação local aprovada. Executando via Electron, " + nickname + ".";
+            } else {
+                actionResult = deviceService.executeWindowsCommand(subCmd, ps);
+                conclusion = "Comando executado remotamente pelo servidor. Status: " + actionResult;
+            }
         }
         else if (lowerCommand.contains("desligar pc") || lowerCommand.contains("desligar o computador")) {
-            actionResult = deviceService.executeWindowsCommand("shutdown /s /t 5", false);
-            conclusion = "Desligamento iniciado. Até breve, " + nickname + ".";
+            if (client.equals("ELECTRON")) {
+                osAction = "shutdown /s /t 5";
+                conclusion = "Protocolo de desligamento local ativado. Até breve, " + nickname + ".";
+            } else {
+                deviceService.executeWindowsCommand("shutdown /s /t 5", false);
+                conclusion = "Desligando o servidor central remotamente. Até logo.";
+            }
         }
         else if (lowerCommand.contains("reiniciar pc") || lowerCommand.contains("reiniciar o computador")) {
-            actionResult = deviceService.executeWindowsCommand("shutdown /r /t 5", false);
-            conclusion = "Reinício agendado. Volto logo, " + nickname + ".";
+            if (client.equals("ELECTRON")) {
+                osAction = "shutdown /r /t 5";
+                conclusion = "Reinício local agendado, " + nickname + ".";
+            } else {
+                deviceService.executeWindowsCommand("shutdown /r /t 5", false);
+                conclusion = "Reiniciando o núcleo do servidor remotamente.";
+            }
         }
         else if (lowerCommand.contains("aumentar volume") || lowerCommand.contains("volume up")) {
-            actionResult = deviceService.executeWindowsCommand("nircmd.exe changesysvolume 10000", false);
-            conclusion = "Volume aumentado, " + nickname + ". Está alto o suficiente?";
+            if (client.equals("ELECTRON")) {
+                osAction = "nircmd.exe changesysvolume 10000";
+                conclusion = "Volume do terminal ajustado para cima.";
+            } else {
+                deviceService.executeWindowsCommand("nircmd.exe changesysvolume 10000", false);
+                conclusion = "Volume do servidor remoto aumentado.";
+            }
         }
         else if (lowerCommand.contains("diminuir volume") || lowerCommand.contains("volume down")) {
-            actionResult = deviceService.executeWindowsCommand("nircmd.exe changesysvolume -10000", false);
-            conclusion = "Volume diminuído, " + nickname + ". Melhor assim?";
-        }
-        else if (lowerCommand.contains("tirar print") || lowerCommand.contains("screenshot no celular")) {
-            actionResult = deviceService.executeAdbCommand("shell screencap -p /sdcard/ghost-screenshot.png");
-            conclusion = "Screenshot tirado no celular e salvo em /sdcard/ghost-screenshot.png, " + nickname + ".";
+            if (client.equals("ELECTRON")) {
+                osAction = "nircmd.exe changesysvolume -10000";
+                conclusion = "Volume do terminal reduzido, " + nickname + ".";
+            } else {
+                deviceService.executeWindowsCommand("nircmd.exe changesysvolume -10000", false);
+                conclusion = "Volume do servidor remoto diminuído.";
+            }
         }
         else if (lowerCommand.contains("bloquear tela") || lowerCommand.contains("lock screen")) {
-            actionResult = deviceService.executeWindowsCommand("rundll32.exe user32.dll,LockWorkStation", false);
-            conclusion = "Tela bloqueada instantaneamente, " + nickname + ". Segurança reforçada.";
+            if (client.equals("ELECTRON")) {
+                osAction = "rundll32.exe user32.dll,LockWorkStation";
+                conclusion = "Acesso ao terminal bloqueado. Sistema seguro.";
+            } else {
+                deviceService.executeWindowsCommand("rundll32.exe user32.dll,LockWorkStation", false);
+                conclusion = "Servidor remoto travado com sucesso.";
+            }
         }
-        else if (lowerCommand.contains("abrir whatsapp no celular")) {
-            actionResult = deviceService.openAndroidApp("com.whatsapp");
-            conclusion = "WhatsApp aberto no celular. Pronto, " + nickname + ".";
+
+        // ---------------------------------------------------------
+        // COMANDOS DIRETOS DO SERVIDOR (Mobile / Manutenção)
+        // ---------------------------------------------------------
+        else if (lowerCommand.startsWith("execute no android") || lowerCommand.startsWith("rode no android")) {
+            String prefix = getPrefix(lowerCommand, new String[]{"execute no android", "rode no android"});
+            String subCmd = rawCommand.substring(prefix.length()).trim();
+            actionResult = deviceService.executeAdbCommand(subCmd);
+            conclusion = actionResult.contains("OK") ? "Link neural com o Android confirmado." : "Falha na ponte ADB.";
+        }
+        else if (lowerCommand.contains("tirar print") || lowerCommand.contains("screenshot no celular")) {
+            deviceService.executeAdbCommand("shell screencap -p /sdcard/ghost-screenshot.png");
+            conclusion = "Screenshot salvo na memória do dispositivo móvel, " + nickname + ".";
         }
         else if (lowerCommand.contains("pente fino") || lowerCommand.contains("diagnostico")) {
             actionResult = maintenanceService.runDiagnostics();
-            conclusion = "Diagnóstico completo, " + nickname + ". Tudo verificado.";
-        }
-        else if (lowerCommand.contains("atualizar") || lowerCommand.contains("update")) {
-            actionResult = maintenanceService.performSelfUpdate();
-            conclusion = "Atualização iniciada, " + nickname + ". Sistema evoluindo.";
+            conclusion = "Diagnóstico completo finalizado.";
         }
         else {
-            // Fallback para IA com confirmação inicial (Modo God mas comando desconhecido)
-            String aiResponse = intelligenceService.getAiResponse(rawCommand, nickname, true, uid);
-            return confirmation + "\n" + aiResponse;
+            // Não é um comando de máquina, então o Cérebro IA processa o texto normalmente
+            String aiResponse = intelligenceService.getAiResponse(rawCommand, nickname, true, request.uid());
+            return new CommandResult(confirmation + "\n" + aiResponse, "");
         }
 
-        // Resposta padrão para comandos diretos
-        return confirmation + "\n" + actionResult + "\n" + conclusion;
+        return new CommandResult(confirmation + "\n" + conclusion, osAction);
     }
 
     private String getPrefix(String lowerCommand, String[] possiblePrefixes) {
         for (String prefix : possiblePrefixes) {
-            if (lowerCommand.startsWith(prefix)) {
-                return prefix;
-            }
+            if (lowerCommand.startsWith(prefix)) return prefix;
         }
         return "";
     }
