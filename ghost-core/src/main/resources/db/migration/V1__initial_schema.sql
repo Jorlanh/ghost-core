@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS ghost_memories (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     firebase_uid VARCHAR(255) NOT NULL REFERENCES users_context(firebase_uid),
     content TEXT NOT NULL,
-    embedding vector(1536), 
+    embedding vector(768), -- CORRIGIDO PARA O TAMANHO DO GEMINI
     importance_weight INTEGER DEFAULT 1 CHECK (importance_weight BETWEEN 1 AND 10),
     category VARCHAR(50),
     metadata JSONB DEFAULT '{}',

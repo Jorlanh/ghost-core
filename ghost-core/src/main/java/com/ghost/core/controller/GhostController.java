@@ -15,7 +15,7 @@ import java.util.Map;
 @RequestMapping("/api/v1/ghost")
 @RequiredArgsConstructor
 @Slf4j
-@CrossOrigin(origins = "*")
+// @CrossOrigin(origins = "*")
 public class GhostController {
 
     private final IntelligenceService intelligenceService;
@@ -116,22 +116,32 @@ public class GhostController {
                 conclusion = "Reiniciando o núcleo do servidor remotamente.";
             }
         }
-        else if (lowerCommand.contains("aumentar volume") || lowerCommand.contains("volume up")) {
+        else if (lowerCommand.contains("aumentar volume") || lowerCommand.contains("volume up") || lowerCommand.contains("sobe o som")) {
             if (client.equals("ELECTRON")) {
-                osAction = "nircmd.exe changesysvolume 10000";
+                // Roteamento para fallback interno no Electron ou NirCmd
+                osAction = "VOLUME_UP"; 
                 conclusion = "Volume do terminal ajustado para cima.";
             } else {
                 deviceService.executeWindowsCommand("nircmd.exe changesysvolume 10000", false);
                 conclusion = "Volume do servidor remoto aumentado.";
             }
         }
-        else if (lowerCommand.contains("diminuir volume") || lowerCommand.contains("volume down")) {
+        else if (lowerCommand.contains("diminuir volume") || lowerCommand.contains("volume down") || lowerCommand.contains("baixa o som")) {
             if (client.equals("ELECTRON")) {
-                osAction = "nircmd.exe changesysvolume -10000";
+                osAction = "VOLUME_DOWN";
                 conclusion = "Volume do terminal reduzido, " + nickname + ".";
             } else {
                 deviceService.executeWindowsCommand("nircmd.exe changesysvolume -10000", false);
                 conclusion = "Volume do servidor remoto diminuído.";
+            }
+        }
+        else if (lowerCommand.contains("mudo") || lowerCommand.contains("silenciar") || lowerCommand.contains("fica quieto")) {
+            if (client.equals("ELECTRON")) {
+                osAction = "VOLUME_MUTE";
+                conclusion = "Sistema em modo silencioso.";
+            } else {
+                deviceService.executeWindowsCommand("nircmd.exe mutesysvolume 2", false);
+                conclusion = "Servidor remoto silenciado.";
             }
         }
         else if (lowerCommand.contains("bloquear tela") || lowerCommand.contains("lock screen")) {
@@ -145,7 +155,7 @@ public class GhostController {
         }
 
         // ---------------------------------------------------------
-        // COMANDOS DIRETOS DO SERVIDOR (Mobile / Manutenção)
+        // COMANDOS DIRETOS DO SERVIDOR (Mobile / Manutenção / ADB)
         // ---------------------------------------------------------
         else if (lowerCommand.startsWith("execute no android") || lowerCommand.startsWith("rode no android")) {
             String prefix = getPrefix(lowerCommand, new String[]{"execute no android", "rode no android"});
@@ -162,7 +172,7 @@ public class GhostController {
             conclusion = "Diagnóstico completo finalizado.";
         }
         else {
-            // Não é um comando de máquina, então o Cérebro IA processa o texto normalmente
+            // Se não for comando de hardware, a IA processa o diálogo normalmente
             String aiResponse = intelligenceService.getAiResponse(rawCommand, nickname, true, request.uid());
             return new CommandResult(confirmation + "\n" + aiResponse, "");
         }
