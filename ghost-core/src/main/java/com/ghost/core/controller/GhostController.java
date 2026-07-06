@@ -7,7 +7,10 @@ import com.ghost.core.service.IntelligenceService;
 import com.ghost.core.service.SystemMaintenanceService;
 import com.ghost.core.service.TtsService;
 import com.ghost.core.service.AudioTranscriptionService;
+import com.ghost.core.service.OllamaClientService;
 import com.ghost.core.service.AgenticService; // INJEÇÃO DO MOTOR AUTÔNOMO
+import com.ghost.core.service.VisionService;
+import com.ghost.core.service.security.LocalCyberOpsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -41,9 +44,54 @@ public class GhostController {
     private final TtsService ttsService;
     private final AudioTranscriptionService audioTranscriptionService;
     private final AgenticService agenticService; // O Lóbulo Frontal da Autonomia
+    private final OllamaClientService ollamaClientService;
+    private final VisionService visionService;
+    private final LocalCyberOpsService cyberOpsService;
 
     public record InteractionRequest(String command, String uid, String clientSource) {}
     private record CommandResult(String text, String osCommand) {}
+
+    @GetMapping("/status")
+    public ResponseEntity<Map<String, Object>> status() {
+        boolean ollamaOnline = ollamaClientService.isAvailable();
+        return ResponseEntity.ok(Map.of(
+                "status", "ONLINE",
+                "brain", "OLLAMA_LOCAL",
+                "ollamaOnline", ollamaOnline,
+                "models", ollamaClientService.describeModels(),
+                "voice", "ghost-voice",
+                "operator", "Senhor Walker",
+                "modules", Map.of(
+                        "vision", true,
+                        "cyberOps", "defensive-only",
+                        "selfHealing", true,
+                        "voiceRouting", true,
+                        "memory", "postgres"
+                )
+        ));
+    }
+
+    @GetMapping("/diagnostics")
+    public ResponseEntity<Map<String, Object>> diagnostics() {
+        return ResponseEntity.ok(Map.of(
+                "status", "SUCCESS",
+                "report", maintenanceService.runDiagnostics()
+        ));
+    }
+
+    @GetMapping("/vision/snapshot")
+    public ResponseEntity<Map<String, Object>> visionSnapshot() {
+        String base64 = visionService.captureScreenAsBase64();
+        return ResponseEntity.ok(Map.of(
+                "status", base64 == null ? "UNAVAILABLE" : "SUCCESS",
+                "imageBase64", base64 == null ? "" : base64
+        ));
+    }
+
+    @GetMapping("/cyber/defensive-scan")
+    public ResponseEntity<Map<String, Object>> defensiveScan(@RequestParam(value = "target", defaultValue = "127.0.0.1") String target) {
+        return ResponseEntity.ok(cyberOpsService.defensiveSummary(target));
+    }
 
     @PostMapping(value = "/interact/audio", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<Map<String, Object>> interactAudio(
@@ -59,7 +107,7 @@ public class GhostController {
 
             if (transcribedText == null || transcribedText.isBlank()) {
                 return ResponseEntity.ok(Map.of(
-                        "response", "Ora, ora... não consegui decodificar esse áudio, Capitãooo. Vê se fala direito, seu verme!",
+                        "response", "Senhor, não consegui decodificar o áudio.",
                         "status", "ERROR"
                 ));
             }
@@ -70,7 +118,7 @@ public class GhostController {
         } catch (Exception e) {
             log.error("Erro crítico na decodificação de áudio: {}", e.getMessage());
             return ResponseEntity.status(500).body(Map.of(
-                    "response", "Falha no córtex auditivo! Esse microfone de classe baixa não aguenta o meu poder.",
+                    "response", "Falha no córtex auditivo.",
                     "status", "ERROR"
             ));
         }
@@ -86,7 +134,7 @@ public class GhostController {
 
         if (isGodMode) {
             String uidClean = request.uid().replaceAll("[^a-zA-Z0-9]", " ").trim();
-            nickname = "Capitãooo " + (uidClean.isEmpty() ? "" : capitalizeFirst(uidClean));
+            nickname = "Senhor " + (uidClean.isEmpty() ? "Usuário" : capitalizeFirst(uidClean));
         }
 
         CommandResult result = processCommand(lowerCommand, rawCommand, nickname, isGodMode, request);
@@ -108,41 +156,42 @@ public class GhostController {
     }
 
     private CommandResult processCommand(String lowerCommand, String rawCommand, String nickname, boolean isGodMode, InteractionRequest request) {
+        if (isWakePhrase(lowerCommand)) {
+            return new CommandResult(intelligenceService.getAiResponse(rawCommand, nickname, isGodMode, request.uid()), "");
+        }
+
         if (!isGodMode) {
             return new CommandResult(intelligenceService.getAiResponse(rawCommand, nickname, false, request.uid()), "");
         }
 
-        // =====================================================================
-        // AS FRASES DE CONFIRMAÇÃO DA ELITE (BAN + VEGETA)
-        // =====================================================================
         String[] confirmPhrases = {
-            "Ora, ora, Capitãooo... vou esmagar esse processo num instante. Que tédiooo...",
-            "Nhé, deixa comigo, Capitãooo. Uma tarefa fácil demais para a elite.",
-            "Eu não costumo obedecer a vermes, mas como é você, Capitãooo... já estou executando.",
-            "Trabalho de classe baixa... mas tá, já estou processando seu pedido, Capitãooo."
+            "É pra já, " + nickname + ".",
+            "Deixa comigo, " + nickname + ".",
+            "Imediatamente, meu senhor.",
+            "Já estou executando, " + nickname + "."
         };
         String confirmation = confirmPhrases[(int)(Math.random() * confirmPhrases.length)];
 
         String client = request.clientSource() != null ? request.clientSource().toUpperCase() : "WEB";
         
         String actionResult = "";
-        String conclusion = "Pronto, Capitãooo. Vai querer mais alguma coisa ou posso voltar pro meu tédio?";
+        String conclusion = "Pronto, " + nickname + ". Algo mais?";
         String osAction = ""; 
 
         // 1. HARDCODED COMMANDS BÁSICOS
         if (lowerCommand.contains("desligar pc")) {
             osAction = client.equals("ELECTRON") ? "shutdown /s /t 5" : "";
             if(!client.equals("ELECTRON")) deviceService.executeWindowsCommand("shutdown /s /t 5", false);
-            conclusion = "Protocolo de desligamento ativado. Finalmente um pouco de paz, Capitãooo... nhé.";
+            conclusion = "Protocolo de desligamento ativado.";
         }
         else if (lowerCommand.contains("reiniciar pc")) {
             osAction = client.equals("ELECTRON") ? "shutdown /r /t 5" : "";
             if(!client.equals("ELECTRON")) deviceService.executeWindowsCommand("shutdown /r /t 5", false);
-            conclusion = "Reinício agendado. Vê se volta com um KI mais alto, seu verme.";
+            conclusion = "Reinício agendado.";
         }
         else if (lowerCommand.contains("diagnostico")) {
             actionResult = maintenanceService.runDiagnostics();
-            conclusion = "Diagnóstico finalizado. Analisar esse lixo foi um tédiooo...";
+            conclusion = "Diagnóstico completo finalizado.";
         }
         // =====================================================================
         // NÍVEL 8: SENTINELA SOB DEMANDA (Leitura de Arquivos)
@@ -159,7 +208,7 @@ public class GhostController {
             
             // Aviso prévio antes de entrar no loop demorado
             try {
-                ttsService.synthesize("Iniciando modo autônomo, Capitãooo. Assumindo o controle, afinal, vermes como você precisam da ajuda da elite.");
+                ttsService.synthesize("Iniciando modo autônomo. Assumindo controle para processar a tarefa, Senhor.");
             } catch (Exception e) {
                 log.warn("Falha no TTS de aviso do Modo Agente.");
             }
@@ -199,7 +248,7 @@ public class GhostController {
                             String skillContent = actionNode.get("content").asText();
                             Path skillPath = skillsDir.resolve(skillName);
                             Files.writeString(skillPath, skillContent, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-                            osAction = "Skill [" + skillName + "] forjada. Uma técnica digna de um Príncipe Imortal, Capitãooo.";
+                            osAction = "Skill [" + skillName + "] forjada e salva no Córtex com sucesso.";
                             break;
 
                         case "EXECUTE_SKILL":
@@ -208,7 +257,7 @@ public class GhostController {
                             Path targetSkill = skillsDir.resolve(runName);
                             
                             if (!Files.exists(targetSkill)) {
-                                aiResponse += " Que tédiooo... A skill solicitada não existe. Tente criar algo útil primeiro, classe baixa.";
+                                aiResponse += " Erro: A skill solicitada não foi encontrada no meu banco de dados.";
                                 break;
                             }
                             
@@ -300,7 +349,7 @@ public class GhostController {
                     }
                 } catch (Exception e) {
                     log.error("GHOST >> Falha na automação UI/OS: {}", e.getMessage());
-                    aiResponse += " Capitãooo, essa máquina de classe baixa falhou ao tentar manipular o sistema físico. Que tédiooo...";
+                    aiResponse += " Senhor, encontrei uma falha crítica ao tentar manipular o sistema físico.";
                 }
                 
                 return new CommandResult(confirmation + " " + aiResponse, osAction);
@@ -315,5 +364,12 @@ public class GhostController {
     private String capitalizeFirst(String str) {
         if (str == null || str.isEmpty()) return str;
         return str.substring(0, 1).toUpperCase() + str.substring(1).toLowerCase();
+    }
+
+    private boolean isWakePhrase(String lowerCommand) {
+        return lowerCommand.equals("acorda criança, o papai chegou")
+                || lowerCommand.equals("acorda crianca, o papai chegou")
+                || lowerCommand.equals("acorda criança o papai chegou")
+                || lowerCommand.equals("acorda crianca o papai chegou");
     }
 }

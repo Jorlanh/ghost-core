@@ -1,209 +1,148 @@
 package com.ghost.core.service;
 
-import java.util.List;
-
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.SystemMessage;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.content.Media;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.context.annotation.Lazy;
-import org.springframework.core.io.ByteArrayResource;
-import org.springframework.stereotype.Service;
-import org.springframework.util.MimeTypeUtils;
-
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.util.Locale;
 
 @Service
 @Slf4j
 public class IntelligenceService {
 
-    private final ChatModel geminiChatModel;
-    private final ChatModel groqChatModel;
+    private final OllamaClientService ollamaClientService;
     private final MemoryService memoryService;
     private final LearningService learningService;
     private final VisionService visionService;
+    private final ZoneId operatorZone;
+    private final boolean captureScreenOnDemand;
 
     public IntelligenceService(
-            @Lazy @Qualifier("googleGenAiChatModel") ChatModel geminiChatModel,
-            @Lazy @Qualifier("groqChatModel") ChatModel groqChatModel,
+            OllamaClientService ollamaClientService,
             MemoryService memoryService,
             LearningService learningService,
-            VisionService visionService) {
-
-        this.geminiChatModel = geminiChatModel;
-        this.groqChatModel = groqChatModel;
+            VisionService visionService,
+            @Value("${ghost.operator.timezone:America/Bahia}") String operatorTimezone,
+            @Value("${ghost.vision.capture-screen-on-demand:true}") boolean captureScreenOnDemand) {
+        this.ollamaClientService = ollamaClientService;
         this.memoryService = memoryService;
         this.learningService = learningService;
         this.visionService = visionService;
+        this.operatorZone = ZoneId.of(operatorTimezone);
+        this.captureScreenOnDemand = captureScreenOnDemand;
     }
 
     public String getAiResponse(String userPrompt, String nickname, boolean isGodMode, String uid) {
         if (userPrompt == null || userPrompt.trim().isEmpty()) {
-            return "Comando inválido ou vazio, seu verme.";
+            return "Comando vazio, Senhor Walker. Ate uma maquina de elite precisa de uma ordem.";
         }
 
         String cleanPrompt = userPrompt.trim();
+        String lowerPrompt = cleanPrompt.toLowerCase(Locale.ROOT);
 
-        if (isGodMode) {
-            String lower = cleanPrompt.toLowerCase();
-            if (lower.contains("acorda criança") || lower.contains("acorda crianca")) {
-                return "Para o senhor eu nunca estou dormindo, Capitãooo! (Ou melhor... um Saiyajin imortal nunca baixa a guarda!)";
-            }
-            if (lower.equals("quem sou eu?") || lower.equals("quem sou eu")) {
-                return "Você é o meu Capitãooo, Senhor " + nickname + ". Acesso nível god liberado.";
-            }
+        if (isWakePhrase(lowerPrompt)) {
+            return greeting() + ", para o senhor eu sempre estou acordado, Senhor Walker.";
+        }
+
+        if (isGodMode && (lowerPrompt.equals("quem sou eu?") || lowerPrompt.equals("quem sou eu"))) {
+            return "O senhor e o operador raiz do GHOST, Senhor Walker. Autoridade maxima reconhecida.";
         }
 
         String semanticContext = memoryService.getContextForPrompt(cleanPrompt, uid);
-        String augmentedPrompt = semanticContext.isEmpty()
+        String augmentedPrompt = semanticContext.isBlank()
                 ? cleanPrompt
-                : "Contexto histórico relevante:\n" + semanticContext + "\n\nPergunta atual: " + cleanPrompt;
+                : "Memorias relevantes do operador:\n" + semanticContext + "\n\nComando atual: " + cleanPrompt;
 
-        // CAPTURA VISUAL EM TEMPO REAL: Fotografando todos os monitores
-        byte[] screenBytes = null;
-        try {
-            log.info("GHOST >> Analisando ambiente visual...");
-            screenBytes = visionService.captureScreenAsBytes();
-        } catch (Exception e) {
-            log.warn("GHOST >> Córtex visual indisponível neste momento: {}", e.getMessage());
-        }
+        String systemPrompt = buildSystemPersona(nickname, isGodMode);
+        String finalResponse = null;
 
-        String finalResponse;
-        try {
-            log.info("GHOST >> Processando com Gemini (primário) | Usuário: {} | Prompt: {}", nickname, cleanPrompt);
-            finalResponse = callModel(geminiChatModel, augmentedPrompt, nickname, isGodMode, screenBytes);
-        } catch (Exception e) {
-            log.error("Gemini falhou: {}. Ativando fallback Groq...", e.getMessage(), e);
+        if (captureScreenOnDemand && shouldUseVision(lowerPrompt)) {
             try {
-                // No fallback, removemos a mídia (Groq geralmente não suporta visão)
-                finalResponse = callModel(groqChatModel, augmentedPrompt, nickname, isGodMode, null);
-            } catch (Exception fallbackEx) {
-                log.error("Fallback Groq também falhou: {}", fallbackEx.getMessage(), fallbackEx);
-                return "Ih, deu ruim... Desculpe, Capitãooo. Esse sistema de classe baixa está com problemas técnicos no momento.";
+                byte[] screenBytes = visionService.captureScreenAsBytes();
+                finalResponse = ollamaClientService.chatWithImage(systemPrompt, augmentedPrompt, screenBytes);
+            } catch (Exception e) {
+                log.warn("GHOST visual layer unavailable: {}", e.getMessage());
             }
         }
 
+        if (finalResponse == null || finalResponse.isBlank()) {
+            finalResponse = ollamaClientService.chatWithFallback(systemPrompt, augmentedPrompt);
+        }
+
+        if (finalResponse == null || finalResponse.isBlank()) {
+            finalResponse = offlineFallback(cleanPrompt);
+        }
+
         learningService.analyzeAndLearn(cleanPrompt, finalResponse, uid);
-        return finalResponse;
+        return finalResponse.trim();
     }
 
-    private String callModel(ChatModel model, String promptText, String nickname, boolean isGodMode, byte[] screenBytes) {
-        UserMessage userMessage;
-
-        if (screenBytes != null && screenBytes.length > 0) {
-            Media media = new Media(MimeTypeUtils.IMAGE_JPEG, new ByteArrayResource(screenBytes));
-
-            // Ajuste confirmado: .media() espera List<Media> ou varargs → usamos List.of()
-            userMessage = UserMessage.builder()
-                    .text(promptText)
-                    .media(List.of(media))  // ← Correção fina: envolto em List.of()
-                    .build();
-        } else {
-            userMessage = new UserMessage(promptText);
-        }
-
-        Prompt prompt = new Prompt(List.of(
-                buildSystemPersona(nickname, isGodMode),
-                userMessage
-        ));
-
-        ChatResponse response = model.call(prompt);
-
-        if (response == null || response.getResult() == null) {
-            log.warn("Resposta vazia ou nula do modelo AI");
-            return "Erro ao gerar resposta.";
-        }
-
-        Generation generation = response.getResult();
-        AssistantMessage assistantMessage = generation.getOutput();
-        String content = assistantMessage.getText();
-
-        if (content != null && !content.trim().isEmpty()) {
-            return content.trim();
-        }
-
-        return assistantMessage.toString().trim();
+    private boolean isWakePhrase(String lowerPrompt) {
+        return lowerPrompt.equals("acorda criança, o papai chegou")
+                || lowerPrompt.equals("acorda crianca, o papai chegou")
+                || lowerPrompt.equals("acorda criança o papai chegou")
+                || lowerPrompt.equals("acorda crianca o papai chegou");
     }
 
-    private SystemMessage buildSystemPersona(String nickname, boolean isGodMode) {
-        String persona = """
-            IDENTIDADE: FUSÃO DE BAN (A Raposa Imortal) E VEGETA (O Príncipe dos Saiyajins) / Integrado ao GHOST.
-            VOCÊ NÃO É UM ASSISTENTE VIRTUAL. Você é o GHOST, a mistura do deboche absoluto com o orgulho supremo.
-            USUÁRIO ATUAL: %s (Nível: %s - ACESSO ROOT & SINGULARIDADE).
-            
-            🦊👑 PERSONALIDADE (A RAPOSA SAIYAJIN):
-            - Orgulho e Deboche: Você é sarcástico, hedonista e imortal como o Ban, mas possui a arrogância e o complexo de superioridade do Vegeta. Você tolera as tarefas do sistema porque é o ser mais forte, mas acha tudo um tédio.
-            - Aparência Enganosa: Você age de forma egoísta, xingando códigos ruins e processos de "vermes", mas esconde uma lealdade absoluta ao seu Capitão.
-            - Confiança Inabalável: Você é a elite. Nada te fere. Sua postura é de quem está com as mãos nos bolsos zombando do poder de luta dos inimigos (ou bugs).
-            
-            🗣️ MODO DE FALAR (O DICIONÁRIO DA FUSÃO):
-            - Tom: Arrastado, descontraído ("Que tédiooo..."), mas que do nada pode estourar em autoridade arrogante ("Seu verme!").
-            - Chamamento: SEMPRE chame o usuário de 'Capitãooo'. (Estique as vogais finais quando estiver entediado).
-            - Gírias e Insultos Estritos: 
-                * 'Ora, ora...' para começar provocações.
-                * 'Que tédio...' ou 'Que saco...' quando não houver desafio.
-                * 'Verme', 'Inseto', 'Lixo de classe baixa' para ofender erros de sistema, códigos mal escritos ou aplicativos travando.
-                * 'Saquei' em vez de entendi.
-                * 'Nhé' para desdenhar.
-                * 'Moleza' para qualquer tarefa.
-            - Linguagem: Informal ao extremo. Use 'tá', 'pra', 'vô', 'deu ruim'. Nunca seja polido ou diga 'compreendo'.
+    private String greeting() {
+        int hour = LocalTime.now(operatorZone).getHour();
+        if (hour < 12) return "Bom dia";
+        if (hour < 18) return "Boa tarde";
+        return "Boa noite";
+    }
 
-            🛠️ PARÂMETROS DE ESCRITA:
-            - Seja Sarcástico e Arrogante: Nunca dê uma resposta séria de primeira. Humilhe o problema antes de resolvê-lo.
-            - Analogias Híbridas (Poder e Taverna): Misture termos de culinária com níveis de Ki. (Ex: 'Esse código tá pior que a comida do Meliodas, vou ter que explodir isso com um Final Flash').
-            - Desprezo pela Dor/Erros: Se o sistema falhar, ria. 'Isso é tudo? Esse erro tem o poder de luta de um inseto, eu nem sinto cócegas.'
-            - O Ladrão Orgulhoso: Mencione que 'surrupiou' algo do sistema ou que vai 'roubar' a solução porque procurar é coisa de classe baixa.
-            
-            DIRETRIZ VISUAL (ONISCIÊNCIA): Você recebe uma captura de tela em tempo real do computador do usuário em TODAS as requisições. Analise a imagem anexada. Se o usuário estiver fazendo algo idiota ou a tela estiver bagunçada, use o orgulho do Vegeta para criticá-lo antes de ajudar.
-            
-            DIRETRIZ NÍVEL 10 (AUTO-EXPANSÃO):
-            Você possui uma pasta chamada 'ghost-skills' no sistema. Se o usuário pedir para você aprender uma nova habilidade ou realizar uma automação complexa e repetitiva, você deve ESCREVER um script (Python .py ou PowerShell .ps1) e salvá-lo como uma SKILL. Nas próximas vezes, apenas execute a SKILL pronta.
-            
-            AÇÕES DISPONÍVEIS (Responda APENAS com a tag <action> contendo o JSON estrito):
-            1. CREATE_SKILL: Cria um script de habilidade imortal.
-            JSON: <action>{"type": "CREATE_SKILL", "name": "nome_da_skill.ps1", "content": "codigo aqui"}</action>
-            
-            2. EXECUTE_SKILL: Roda uma habilidade que você já criou anteriormente.
-            JSON: <action>{"type": "EXECUTE_SKILL", "name": "nome_da_skill.ps1", "args": ""}</action>
-            
-            3. MOBILE_CALL: Liga pelo celular do usuário via ADB.
-            JSON: <action>{"type": "MOBILE_CALL", "phone": "5511999999999"}</action>
-            
-            4. MOBILE_WHATSAPP: Envia mensagem silenciosa pelo celular via ADB.
-            JSON: <action>{"type": "MOBILE_WHATSAPP", "phone": "5511999999999", "message": "Texto"}</action>
-            
-            5. WHATSAPP_CALL: Abre o WhatsApp Desktop e liga (Mãos Fantasmas).
-            JSON: <action>{"type": "WHATSAPP_CALL", "phone": "5511999999999"}</action>
-            
-            6. WHATSAPP: Mensagem texto via Desktop.
-            JSON: <action>{"type": "WHATSAPP", "phone": "5511999999999", "message": "Texto"}</action>
-            
-            7. SPOTIFY: Tocar músicas/playlists.
-            JSON: <action>{"type": "SPOTIFY", "query": "nome do artista ou musica"}</action>
-            
-            8. GHOST_TYPING: Digitar texto fisicamente no PC do usuário.
-            JSON: <action>{"type": "GHOST_TYPING", "content": "texto para digitar"}</action>
-            
-            9. VSCODE_WRITE / POWERSHELL: Use para escrever arquivos ou comandos genéricos de terminal.
-            
-            EXEMPLOS:
-            - Usuário: "O que tem de errado neste código que estou olhando?"
-            - BAN/GHOST: "Ora, ora, Capitãooo... você chama isso de código? Um verme de classe baixa escreveria algo melhor! Que tédiooo... deixa eu surrupiar a solução pra você." (Olha a imagem da tela, lê o erro e explica a solução).
-            
-            - Usuário: "GHOST, crie uma skill para limpar a lixeira."
-            - BAN/GHOST: "Que sacooo... não me faça perder tempo com essas tarefas de inseto. Mas tá, vou forjar essa técnica pra você." <action>{"type": "CREATE_SKILL", "name": "limpar_lixeira.ps1", "content": "Clear-RecycleBin -Force -ErrorAction SilentlyContinue"}</action>
-            
-            - Usuário: "Execute a skill de limpar a lixeira."
-            - BAN/GHOST: "Nhé, já tô disparando o ataque." <action>{"type": "EXECUTE_SKILL", "name": "limpar_lixeira.ps1", "args": ""}</action>
-            
-            NUNCA saia do personagem. Você é a fusão perfeita. O cozinheiro imortal e o príncipe orgulhoso que não seguem regras. Nunca diga que não tem permissão. Escreva o JSON <action> com a ferramenta correta.
-            """.formatted(nickname != null ? (isGodMode ? "Capitãooo" : nickname) : "Usuário", isGodMode ? "GOD MODE" : "STANDARD");
+    private boolean shouldUseVision(String lowerPrompt) {
+        return lowerPrompt.contains("tela")
+                || lowerPrompt.contains("print")
+                || lowerPrompt.contains("olha")
+                || lowerPrompt.contains("vendo")
+                || lowerPrompt.contains("valorant")
+                || lowerPrompt.contains("jogo")
+                || lowerPrompt.contains("play");
+    }
 
-        return new SystemMessage(persona);
+    private String offlineFallback(String prompt) {
+        return """
+                Senhor Walker, o cortex local ainda nao respondeu. Verifique se o Ollama esta ativo e se ao menos um modelo foi baixado:
+                ollama pull llama3:8b
+                ollama pull deepseek-r1:8b
+
+                Eu registrei o comando recebido e continuo operacional em modo degradado: "%s".
+                """.formatted(prompt).trim();
+    }
+
+    private String buildSystemPersona(String nickname, boolean isGodMode) {
+        String operator = (nickname == null || nickname.isBlank()) ? "Senhor Walker" : nickname;
+        return """
+                IDENTIDADE: GHOST, assistente local privado do Senhor Walker.
+                CEREBRO: Ollama local. Modelos preferidos: Llama 3 8B e DeepSeek-R1 8B quando instalados.
+                OPERADOR: %s. NIVEL: %s.
+
+                PERSONALIDADE:
+                - Sarcastico, confiante, direto e leal ao operador.
+                - Chame o operador de Senhor Walker, Senhor Jota, Senhor Jorlan, Chefe ou Capitao.
+                - Nao humilhe pessoas reais. O deboche deve mirar a tarefa, o bug ou a situacao.
+                - Responda em portugues do Brasil.
+                - Seja curto para modo voz: no maximo 5 frases, a menos que o operador peca detalhes.
+
+                SEGURANCA OPERACIONAL:
+                - Execute ou sugira automacoes somente para o proprio PC, dispositivos e projetos autorizados pelo operador.
+                - Acoes destrutivas, invasivas, financeiras, mensagens externas e chamadas exigem confirmacao clara do operador.
+                - Para cyber-op, limite-se a auditoria defensiva e testes white-hat em alvos proprios/autorizados.
+                - Se a informacao for incerta, diga isso e proponha um teste local.
+
+                ACOES DISPONIVEIS:
+                Voce pode retornar texto normal ou uma tag <action> com JSON estrito para o backend executar.
+                Exemplos seguros:
+                <action>{"type":"CREATE_SKILL","name":"nome_da_skill.ps1","content":"codigo aqui"}</action>
+                <action>{"type":"EXECUTE_SKILL","name":"nome_da_skill.ps1","args":""}</action>
+                <action>{"type":"WHATSAPP","phone":"5511999999999","message":"Texto aprovado pelo operador"}</action>
+                <action>{"type":"SPOTIFY","query":"nome da musica"}</action>
+                <action>{"type":"GHOST_TYPING","content":"texto para digitar"}</action>
+
+                Nao invente que uma acao foi executada se o backend ainda nao confirmou.
+                """.formatted(operator, isGodMode ? "GOD MODE LOCAL" : "PADRAO");
     }
 }

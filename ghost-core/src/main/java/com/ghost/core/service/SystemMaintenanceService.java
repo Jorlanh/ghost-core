@@ -4,109 +4,80 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.lang.management.ManagementFactory;
 import java.time.LocalDateTime;
+import java.util.Map;
+import static java.util.Map.entry; // Importação estática adicionada para o entry()
 import java.util.concurrent.CompletableFuture;
 
 @Service
 @Slf4j
 public class SystemMaintenanceService {
 
-    // Caminho onde o relatório será salvo
-    private static final String REPORT_PATH = "C:\\Temp\\ghost_relatorio.txt"; 
-    // Ajuste para onde está seu projeto
-    private static final String PROJECT_ROOT = System.getProperty("user.dir"); 
+    private static final String PROJECT_ROOT = System.getProperty("user.dir");
 
-    /**
-     * TAREFA 1: O "Pente Fino"
-     * Lê o pom.xml, simula verificação e abre o Bloco de Notas.
-     */
     public String runDiagnostics() {
-        log.info("Iniciando varredura de sistema...");
-        
+        Runtime runtime = Runtime.getRuntime();
+        File root = new File(System.getProperty("user.dir")).getAbsoluteFile();
+        File drive = root.toPath().getRoot() != null ? root.toPath().getRoot().toFile() : new File("C:");
+
         StringBuilder report = new StringBuilder();
-        report.append("=== RELATÓRIO DE MANUTENÇÃO GHOST ===\n");
-        report.append("Data: ").append(LocalDateTime.now()).append("\n");
-        report.append("Diretório: ").append(PROJECT_ROOT).append("\n\n");
-
-        // 1. Verificar Arquivo POM (Simulação de leitura)
-        File pomFile = new File(PROJECT_ROOT, "pom.xml");
-        if (pomFile.exists()) {
-            report.append("[OK] pom.xml encontrado.\n");
-            // Aqui você poderia ler o arquivo real e checar versões
-            report.append("[INFO] Spring Boot Version: 3.4.2 (Check: Stable)\n");
-            report.append("[WARN] Dependência 'spring-ai-openai' em Milestone (M5). Risco de instabilidade.\n");
-        } else {
-            report.append("[ERRO] pom.xml não encontrado!\n");
-        }
-
-        // 2. Verificar Espaço em Disco
-        File root = new File("C:");
-        long freeSpaceGB = root.getFreeSpace() / (1024 * 1024 * 1024);
-        report.append("[INFO] Espaço em Disco: ").append(freeSpaceGB).append("GB livres.\n");
-
-        report.append("\n=== CONCLUSÃO ===\n");
-        report.append("Sistema operando nominalmente. Recomendação: Atualizar Spring AI quando sair a versão GA.\n");
-
-        // 3. Salvar e Abrir no Bloco de Notas
-        saveAndOpenNotepad(report.toString());
-
-        return "Diagnóstico concluído. Relatório aberto no seu monitor, Senhor Walker.";
+        report.append("=== GHOST DIAGNOSTICS ===\n");
+        report.append("Timestamp: ").append(LocalDateTime.now()).append("\n");
+        report.append("Project root: ").append(PROJECT_ROOT).append("\n");
+        report.append("Java: ").append(System.getProperty("java.version")).append("\n");
+        report.append("OS: ").append(System.getProperty("os.name")).append(" ").append(System.getProperty("os.version")).append("\n");
+        report.append("Uptime(ms): ").append(ManagementFactory.getRuntimeMXBean().getUptime()).append("\n");
+        report.append("CPU cores: ").append(runtime.availableProcessors()).append("\n");
+        report.append("Memory free/total/max MB: ")
+                .append(runtime.freeMemory() / 1024 / 1024).append("/")
+                .append(runtime.totalMemory() / 1024 / 1024).append("/")
+                .append(runtime.maxMemory() / 1024 / 1024).append("\n");
+        report.append("Disk free GB: ").append(drive.getFreeSpace() / 1024 / 1024 / 1024).append("\n");
+        report.append("Ollama URL: ").append(env("OLLAMA_BASE_URL", "http://localhost:11434")).append("\n");
+        report.append("Voice URL: ").append(env("GHOST_VOICE_URL", "http://localhost:5001")).append("\n");
+        report.append("STT command configured: ").append(!env("GHOST_STT_COMMAND", "").isBlank()).append("\n");
+        report.append("Allowed scan targets: ").append(env("GHOST_ALLOWED_SCAN_TARGETS", "private-networks-only")).append("\n");
+        report.append("Status: NOMINAL\n");
+        return report.toString();
     }
 
-    /**
-     * TAREFA 2: A "Auto-Atualização"
-     * Roda comandos git para se atualizar.
-     */
-    public String performSelfUpdate() {
-        log.info("Iniciando protocolo de auto-atualização...");
+    // Método refatorado para suportar N parâmetros utilizando Map.ofEntries e entry()
+    public Map<String, Object> runDiagnosticsJson() {
+        Runtime runtime = Runtime.getRuntime();
+        return Map.ofEntries(
+                entry("timestamp", LocalDateTime.now().toString()),
+                entry("projectRoot", PROJECT_ROOT),
+                entry("java", System.getProperty("java.version")),
+                entry("os", System.getProperty("os.name") + " " + System.getProperty("os.version")),
+                entry("uptimeMs", ManagementFactory.getRuntimeMXBean().getUptime()),
+                entry("cpuCores", runtime.availableProcessors()),
+                entry("freeMemoryMb", runtime.freeMemory() / 1024 / 1024),
+                entry("totalMemoryMb", runtime.totalMemory() / 1024 / 1024),
+                entry("maxMemoryMb", runtime.maxMemory() / 1024 / 1024),
+                entry("ollamaUrl", env("OLLAMA_BASE_URL", "http://localhost:11434")),
+                entry("voiceUrl", env("GHOST_VOICE_URL", "http://localhost:5001"))
+        );
+    }
 
-        // Executa em thread separada para não travar a resposta da API
+    public String performSelfUpdate() {
         CompletableFuture.runAsync(() -> {
             try {
-                // Roda 'git pull' no diretório do projeto
-                ProcessBuilder builder = new ProcessBuilder("git", "pull");
+                ProcessBuilder builder = new ProcessBuilder("git", "status", "--short");
                 builder.directory(new File(PROJECT_ROOT));
                 builder.redirectErrorStream(true);
-                Process process = builder.start();
-                
-                int exitCode = process.waitFor();
-                
-                if (exitCode == 0) {
-                    log.info("Git Pull realizado com sucesso.");
-                    // Aqui você poderia disparar um script para reiniciar o .jar
-                } else {
-                    log.error("Erro no Git Pull. Código: " + exitCode);
-                }
+                int exitCode = builder.start().waitFor();
+                log.info("Self-check git status completed with exit {}", exitCode);
             } catch (Exception e) {
-                log.error("Falha na atualização: ", e);
+                log.warn("Self-check unavailable: {}", e.getMessage());
             }
         });
 
-        return "Iniciei o protocolo de atualização (Git Pull). Verifique os logs do console para o status do deploy.";
+        return "Autoanalise iniciada. Mudancas reais continuam exigindo autorizacao do operador antes do merge.";
     }
 
-    private void saveAndOpenNotepad(String content) {
-        try {
-            // 1. Cria o arquivo
-            File file = new File(REPORT_PATH);
-            // Garante que a pasta existe
-            file.getParentFile().mkdirs();
-            
-            try (FileWriter writer = new FileWriter(file)) {
-                writer.write(content);
-            }
-
-            // 2. Manda o Windows abrir o Notepad
-            ProcessBuilder pb = new ProcessBuilder("notepad.exe", REPORT_PATH);
-            pb.start();
-            log.info("Bloco de notas aberto com sucesso.");
-
-        } catch (IOException e) {
-            log.error("Erro ao abrir notepad: " + e.getMessage());
-        }
+    private String env(String name, String fallback) {
+        String value = System.getenv(name);
+        return value == null || value.isBlank() ? fallback : value;
     }
 }

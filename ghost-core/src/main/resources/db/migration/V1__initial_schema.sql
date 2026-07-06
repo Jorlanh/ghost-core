@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS ghost_memories (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     firebase_uid VARCHAR(255) NOT NULL REFERENCES users_context(firebase_uid) ON DELETE CASCADE,
     content TEXT NOT NULL,
-    embedding VECTOR(768), -- Otimizado para Google Gemini Flash
+    embedding VECTOR(768), -- Reservado para embeddings locais futuros
     importance_weight INTEGER DEFAULT 1 CHECK (importance_weight BETWEEN 1 AND 10),
     category VARCHAR(50),
     metadata JSONB DEFAULT '{}' NOT NULL,
@@ -113,16 +113,18 @@ CREATE TRIGGER trig_update_last_interaction
 
 -- Inserindo o Criador (Substitua o UID pelo seu real do Firebase)
 INSERT INTO users_context (firebase_uid, nickname, god_mode, preferred_language)
-VALUES ('ID_FIREBASE_WALKER', 'Senhor Walker', TRUE, 'pt-BR')
+VALUES
+    ('Walker', 'Senhor Walker', TRUE, 'pt-BR'),
+    ('ID_FIREBASE_WALKER', 'Senhor Walker', TRUE, 'pt-BR')
 ON CONFLICT (firebase_uid) DO UPDATE
 SET nickname = EXCLUDED.nickname, god_mode = EXCLUDED.god_mode;
 
 -- Configurações Iniciais de API (Atualize as chaves via pgAdmin após o boot)
 INSERT INTO api_configs (service_name, api_key, base_url, priority_level, is_active)
 VALUES
-    ('GEMINI_FLASH', 'CHAVE_AQUI', 'https://generativelanguage.googleapis.com', 1, TRUE),
-    ('GROQ_LLAMA', 'CHAVE_AQUI', 'https://api.groq.com/openai/v1', 2, TRUE),
-    ('OPENWEATHER', 'CHAVE_AQUI', 'https://api.openweathermap.org/data/2.5', 3, TRUE)
+    ('OLLAMA_LLAMA3', 'LOCAL_ONLY', 'http://localhost:11434', 1, TRUE),
+    ('OLLAMA_DEEPSEEK', 'LOCAL_ONLY', 'http://localhost:11434', 2, TRUE),
+    ('OPENWEATHER', 'CONFIGURE_OPENWEATHER_KEY', 'https://api.openweathermap.org/data/2.5', 3, TRUE)
 ON CONFLICT (service_name) DO NOTHING;
 
 -- Dispositivos de Teste

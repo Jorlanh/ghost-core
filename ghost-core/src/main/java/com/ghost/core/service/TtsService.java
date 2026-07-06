@@ -1,137 +1,91 @@
 package com.ghost.core.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
-import java.util.concurrent.TimeUnit;
 
 @Service
 @Slf4j
 public class TtsService {
 
-    // Caminhos (Ajuste conforme sua estrutura real)
-    private static final String AUDIO_CACHE_DIR = "target/classes/static/audio_cache";
-    private static final String PIPER_BIN = "bin/piper/piper.exe"; 
-    private static final String PIPER_MODEL = "bin/piper/pt_br-faber-medium.onnx";
-    
-    // Voz do Edge (Antonio é a melhor masculina PT-BR)
-    private static final String EDGE_VOICE = "pt-BR-AntonioNeural"; 
+    private final RestClient restClient;
+    private final String voiceBaseUrl;
+    private final Path audioCacheDir;
 
-    public TtsService() {
-        // Garante que a pasta de cache existe ao iniciar
-        new File(AUDIO_CACHE_DIR).mkdirs();
+    public TtsService(
+            RestClient.Builder restClientBuilder,
+            @Value("${ghost.voice.base-url:http://localhost:5001}") String voiceBaseUrl,
+            @Value("${ghost.voice.cache-dir:audio_cache}") String audioCacheDir) {
+        this.restClient = restClientBuilder.build();
+        this.voiceBaseUrl = voiceBaseUrl;
+        this.audioCacheDir = Paths.get(audioCacheDir);
+        new File(audioCacheDir).mkdirs();
     }
 
-    /**
-     * Gera o áudio usando Estratégia Híbrida (Online -> Fallback Offline)
-     * Retorna o caminho relativo do arquivo para ser servido pelo Spring Web.
-     */
     public String synthesize(String text) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+
         try {
             String sanitizedText = sanitizeText(text);
-            String filename = generateHash(sanitizedText) + ".mp3";
-            Path outputPath = Paths.get(AUDIO_CACHE_DIR, filename);
+            String filename = generateHash(sanitizedText) + ".wav";
+            Path outputPath = audioCacheDir.resolve(filename);
 
-            // 1. Verificar Cache (Velocidade da Luz)
-            if (Files.exists(outputPath)) {
-                log.info("Audio Cache HIT: {}", filename);
+            if (Files.exists(outputPath) && Files.size(outputPath) > 0) {
                 return "/audio_cache/" + filename;
             }
 
-            // 2. Tentar Edge-TTS (Qualidade Máxima)
-            boolean success = generateWithEdge(sanitizedText, outputPath.toString());
+            String url = UriComponentsBuilder.fromHttpUrl(voiceBaseUrl)
+                    .path("/speak")
+                    .queryParam("text", sanitizedText)
+                    .toUriString();
 
-            // 3. Fallback para Piper (Modo Bunker) se Edge falhar
-            if (!success) {
-                log.warn("Edge-TTS falhou ou offline. Ativando Protocolo PIPER.");
-                filename = filename.replace(".mp3", ".wav"); // Piper gera wav
-                outputPath = Paths.get(AUDIO_CACHE_DIR, filename);
-                
-                if (Files.exists(outputPath)) { // Checa cache do wav também
-                     return "/audio_cache/" + filename;
-                }
-                
-                generateWithPiper(sanitizedText, outputPath.toString());
+            byte[] wav = restClient.get()
+                    .uri(url)
+                    .retrieve()
+                    .body(byte[].class);
+
+            if (wav == null || wav.length == 0) {
+                log.warn("ghost-voice returned empty audio.");
+                return "";
             }
 
-            // Retorna o caminho web acessível
+            Files.createDirectories(audioCacheDir);
+            Files.write(outputPath, wav);
             return "/audio_cache/" + filename;
-
         } catch (Exception e) {
-            log.error("Erro crítico no TTS: ", e);
-            return null; // Frontend tratará silêncio
-        }
-    }
-
-    private boolean generateWithEdge(String text, String outputPath) {
-        try {
-            // Comando: edge-tts --text "Texto" --write-media "arquivo.mp3" --voice pt-BR-AntonioNeural
-            ProcessBuilder pb = new ProcessBuilder(
-                "edge-tts",
-                "--text", text,
-                "--write-media", outputPath,
-                "--voice", EDGE_VOICE
-            );
-            
-            Process p = pb.start();
-            boolean finished = p.waitFor(10, TimeUnit.SECONDS); // Timeout de 10s para não travar
-            
-            return finished && p.exitValue() == 0 && new File(outputPath).length() > 0;
-        } catch (Exception e) {
-            log.error("Falha ao executar Edge-TTS: {}", e.getMessage());
-            return false;
-        }
-    }
-
-    private boolean generateWithPiper(String text, String outputPath) {
-        try {
-            // Piper recebe texto via STDIN (echo "texto" | piper ...)
-            // No Java, escrevemos no outputStream do processo
-            ProcessBuilder pb = new ProcessBuilder(
-                PIPER_BIN,
-                "--model", PIPER_MODEL,
-                "--output_file", outputPath
-            );
-            
-            Process p = pb.start();
-            
-            // Escreve o texto no input do Piper
-            try (var os = p.getOutputStream()) {
-                os.write(text.getBytes(StandardCharsets.UTF_8));
-                os.flush();
-            }
-
-            boolean finished = p.waitFor(5, TimeUnit.SECONDS);
-            return finished && p.exitValue() == 0;
-        } catch (Exception e) {
-            log.error("Falha crítica no Piper: {}", e.getMessage());
-            return false;
+            log.warn("ghost-voice unavailable. Browser TTS fallback will be used. Cause: {}", e.getMessage());
+            return "";
         }
     }
 
     private String sanitizeText(String text) {
-        // Remove caracteres que podem quebrar o comando shell
-        return text.replace("\"", "").replace("'", "").replace("\n", " ");
+        return text.replace("\"", "")
+                .replace("'", "")
+                .replace("\r", " ")
+                .replace("\n", " ")
+                .trim();
     }
 
     private String generateHash(String input) {
         try {
-            MessageDigest digest = MessageDigest.getInstance("MD5");
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hexString = new StringBuilder();
+            StringBuilder hex = new StringBuilder();
             for (byte b : hash) {
-                String hex = Integer.toHexString(0xff & b);
-                if (hex.length() == 1) hexString.append('0');
-                hexString.append(hex);
+                hex.append(String.format("%02x", b));
             }
-            return hexString.toString();
+            return hex.substring(0, 32);
         } catch (Exception e) {
             return String.valueOf(input.hashCode());
         }

@@ -4,7 +4,6 @@ import com.ghost.core.model.GhostMemory;
 import com.ghost.core.repository.GhostMemoryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,77 +16,59 @@ import java.util.stream.Collectors;
 public class MemoryService {
 
     private final GhostMemoryRepository ghostMemoryRepository;
-    private final EmbeddingModel embeddingModel; // Spring AI injeta automaticamente (Gemini/OpenAI)
 
-    /**
-     * Salva uma nova memória após gerar o embedding.
-     */
     @Transactional
     public void saveMemory(String content, String firebaseUid, String category, int importance) {
-        try {
-            log.info("Vetorizando memória para usuário {}: {}", firebaseUid, content.substring(0, Math.min(50, content.length())) + "...");
-            float[] vector = embeddingModel.embed(content);
+        if (content == null || content.isBlank()) {
+            return;
+        }
 
+        try {
             GhostMemory memory = GhostMemory.builder()
-                    .firebaseUid(firebaseUid)
-                    .content(content)
-                    .embedding(vector)
-                    .importanceWeight(importance)
-                    .category(category != null ? category : "auto-learned")
+                    .firebaseUid(normalizeUid(firebaseUid))
+                    .content(content.trim())
+                    .importanceWeight(Math.max(1, Math.min(10, importance)))
+                    .category(category != null && !category.isBlank() ? category : "auto-learned")
                     .metadata("{}")
                     .build();
 
             ghostMemoryRepository.save(memory);
-            log.info("Memória salva. Categoria: {}, Importância: {}", memory.getCategory(), importance);
+            log.info("Memoria persistida. Categoria: {}, importancia: {}", memory.getCategory(), memory.getImportanceWeight());
         } catch (Exception e) {
-            log.error("Falha ao salvar memória semântica: {}", e.getMessage(), e);
+            log.warn("Memoria indisponivel no momento: {}", e.getMessage());
         }
     }
 
-    /**
-     * Recupera contexto relevante para aumentar o prompt (RAG híbrido).
-     */
     public String getContextForPrompt(String userPrompt, String firebaseUid) {
         try {
-            float[] queryVector = embeddingModel.embed(userPrompt);
-
-            // Usa a busca híbrida (similaridade + importância + recência)
-            List<GhostMemory> memories = ghostMemoryRepository.findHybridRelevantMemories(
-                    firebaseUid, queryVector, 5 // top 5
-            );
-
+            List<GhostMemory> memories = ghostMemoryRepository.findTop5ByFirebaseUidOrderByCreatedAtDesc(normalizeUid(firebaseUid));
             if (memories.isEmpty()) {
                 return "";
             }
 
-            String context = memories.stream()
-                    .map(m -> String.format(
-                            "[%s | %s | Importância %d]: %s",
+            return memories.stream()
+                    .map(m -> String.format("[%s | importancia %d]: %s",
                             m.getCategory(),
-                            m.getCreatedAt().toString(),
                             m.getImportanceWeight(),
-                            m.getContent()
-                    ))
-                    .collect(Collectors.joining("\n", "\n--- MEMÓRIAS RECUPERADAS ---\n", "\n--- FIM DAS MEMÓRIAS ---\n"));
-
-            log.debug("Contexto RAG recuperado ({} memórias)", memories.size());
-            return context;
+                            m.getContent()))
+                    .collect(Collectors.joining("\n"));
         } catch (Exception e) {
-            log.error("Erro na recuperação semântica: {}", e.getMessage(), e);
+            log.warn("Recuperacao de memoria indisponivel: {}", e.getMessage());
             return "";
         }
     }
 
-    /**
-     * Esquecimento seletivo (segurança).
-     */
     @Transactional
     public void forget(String firebaseUid, String keyword) {
         try {
-            ghostMemoryRepository.deleteMemoriesByKeyword(firebaseUid, keyword);
-            log.warn("Memórias contendo '{}' foram eliminadas para usuário {}", keyword, firebaseUid);
+            ghostMemoryRepository.deleteMemoriesByKeyword(normalizeUid(firebaseUid), keyword);
+            log.warn("Memorias contendo '{}' foram removidas para usuario {}", keyword, firebaseUid);
         } catch (Exception e) {
-            log.error("Falha no esquecimento seletivo: {}", e.getMessage(), e);
+            log.warn("Falha no esquecimento seletivo: {}", e.getMessage());
         }
+    }
+
+    private String normalizeUid(String firebaseUid) {
+        return firebaseUid == null || firebaseUid.isBlank() ? "Walker" : firebaseUid;
     }
 }

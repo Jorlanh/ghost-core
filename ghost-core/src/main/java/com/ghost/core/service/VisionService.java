@@ -15,7 +15,7 @@ public class VisionService {
 
     /**
      * Tira um print screen de TODOS os monitores conectados simultaneamente.
-     * Converte a imagem para Base64 (formato aceito pelo Gemini Vision).
+     * Converte a imagem para Base64 (formato aceito por modelos locais de visao no Ollama).
      *
      * @return String em Base64 contendo a imagem da tela, ou null em caso de falha.
      */

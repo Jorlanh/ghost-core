@@ -32,12 +32,12 @@ public class GhostMemory {
     private String content;
 
     /**
-     * Embedding vetorial (1536 dims - compatível com Gemini 1.5, text-embedding-ada-002, etc.)
-     * Mapeamento nativo via hibernate-vector + pgvector
+     * Embedding opcional. O modo padrao usa memoria textual local;
+     * modelos de embedding locais podem preencher 768 dimensoes depois.
      */
     @JdbcTypeCode(SqlTypes.VECTOR)
-    @Array(length = 1536)
-    @Column(name = "embedding", columnDefinition = "vector(1536)", nullable = true)
+    @Array(length = 768)
+    @Column(name = "embedding", columnDefinition = "vector(768)", nullable = true)
     private float[] embedding;
 
     @Builder.Default

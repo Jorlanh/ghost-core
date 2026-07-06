@@ -13,6 +13,8 @@ import java.util.UUID;
 @Repository
 public interface GhostMemoryRepository extends JpaRepository<GhostMemory, UUID> {
 
+    List<GhostMemory> findTop5ByFirebaseUidOrderByCreatedAtDesc(String firebaseUid);
+
     @Query(value = """
         SELECT * FROM ghost_memories
         WHERE firebase_uid = :firebaseUid

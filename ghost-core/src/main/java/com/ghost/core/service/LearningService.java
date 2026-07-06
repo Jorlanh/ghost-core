@@ -1,81 +1,51 @@
 package com.ghost.core.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
+import java.util.Locale;
 
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class LearningService {
 
     private final MemoryService memoryService;
-    private final ChatModel geminiChatModel;
-    private final ChatModel groqChatModel;
-
-    // CONSTRUTOR MANUAL: Obrigatório para @Qualifier funcionar corretamente sem ambiguidades
-    public LearningService(
-            MemoryService memoryService,
-            @Qualifier("googleGenAiChatModel") ChatModel geminiChatModel, // <--- Nome correto do bean
-            @Qualifier("groqChatModel") ChatModel groqChatModel) {
-        
-        this.memoryService = memoryService;
-        this.geminiChatModel = geminiChatModel;
-        this.groqChatModel = groqChatModel;
-    }
 
     @Async
     public void analyzeAndLearn(String userMessage, String aiResponse, String firebaseUid) {
-        log.info("Iniciando auto-aprendizado para usuário: {}", firebaseUid);
-
-        String evaluationPrompt = """
-            Você é o módulo de memória do GHOST.
-            Analise a conversa e responda SOMENTE com JSON.
-            
-            CONVERSA:
-            Usuário: %s
-            GHOST: %s
-
-            JSON ESPERADO:
-            {"shouldSave": true, "content": "resumo do fato", "category": "personal", "importance": 8}
-            OU
-            {"shouldSave": false}
-            """.formatted(userMessage, aiResponse);
-
-        try {
-            // Groq é rápido e barato -> ideal para essa tarefa de background
-            String jsonDecision = callModelWithFallback(groqChatModel, geminiChatModel, evaluationPrompt, firebaseUid);
-
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode node = mapper.readTree(jsonDecision);
-
-            if (node.path("shouldSave").asBoolean(false)) {
-                String content = node.path("content").asText();
-                String category = node.path("category").asText("other");
-                int importance = node.path("importance").asInt(5);
-
-                if (content != null && !content.isEmpty()) {
-                    memoryService.saveMemory(content, firebaseUid, category, importance);
-                    log.info("Memória salva: {}", content);
-                }
-            }
-        } catch (Exception e) {
-            log.error("Erro no auto-aprendizado (uid {}): {}", firebaseUid, e.getMessage());
+        if (userMessage == null || userMessage.isBlank()) {
+            return;
         }
-    }
 
-    private String callModelWithFallback(ChatModel primary, ChatModel fallback, String promptText, String uid) {
+        String lower = userMessage.toLowerCase(Locale.ROOT);
+        boolean shouldSave = lower.contains("me chame")
+                || lower.contains("prefiro")
+                || lower.contains("lembre")
+                || lower.contains("guarde")
+                || lower.contains("meu projeto")
+                || lower.contains("meu pc")
+                || lower.contains("meu relogio")
+                || lower.contains("smartwatch")
+                || lower.contains("notion")
+                || lower.contains("obsidian")
+                || lower.contains("ollama");
+
+        if (!shouldSave) {
+            return;
+        }
+
+        String summary = "Usuario informou: " + userMessage.trim();
+        if (summary.length() > 900) {
+            summary = summary.substring(0, 900) + "...";
+        }
+
         try {
-            return primary.call(new Prompt(promptText)).getResult().getOutput().getText();
+            memoryService.saveMemory(summary, firebaseUid, "operator-context", 7);
         } catch (Exception e) {
-            log.warn("Modelo primário falhou no learning, tentando fallback...");
-            return fallback.call(new Prompt(promptText)).getResult().getOutput().getText();
+            log.warn("Autoaprendizado local indisponivel: {}", e.getMessage());
         }
     }
 }
