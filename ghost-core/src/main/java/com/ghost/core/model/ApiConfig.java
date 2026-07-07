@@ -1,48 +1,37 @@
 package com.ghost.core.model;
 
-import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
+import lombok.*;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.mapping.Field;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-@Entity
-@Table(name = "api_configs")
+@Document(collection = "api_configs")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 public class ApiConfig {
-
     @Id
-    @GeneratedValue(strategy = GenerationType.AUTO)
-    private UUID id;
+    private String id; // MongoDB usa String ou ObjectId
 
-    @Column(name = "service_name", unique = true, nullable = false)
+    @Field("service_name")
     private String serviceName;
 
-    @Column(name = "api_key", nullable = false)
+    @Field("api_key")
     private String apiKey;
 
-    @Column(name = "base_url")
+    @Field("base_url")
     private String baseUrl;
 
-    @Column(name = "priority_level")
+    @Field("priority_level")
     private Integer priorityLevel;
 
     @Builder.Default
-    @Column(name = "is_active")
+    @Field("is_active")
     private Boolean isActive = true;
 
-    @Column(name = "updated_at")
+    @Field("updated_at")
     private LocalDateTime updatedAt;
-
-    @PrePersist
-    @PreUpdate
-    public void updateTimestamp() {
-        this.updatedAt = LocalDateTime.now();
-    }
 }

@@ -8,17 +8,17 @@ spring:
   application:
     name: ghost-core
 
-  datasource:
-    url: ${GHOST_DB_URL:jdbc:postgresql://localhost:5432/ghost_db}
-    username: ${GHOST_DB_USER:postgres}
-    password: ${GHOST_DB_PASSWORD:admin}
-    driver-class-name: org.postgresql.Driver
+  #datasource:
+  #  url: ${GHOST_DB_URL:jdbc:postgresql://localhost:5432/ghost_db}
+  #  username: ${GHOST_DB_USER:postgres}
+  #  password: ${GHOST_DB_PASSWORD:admin}
+  #  driver-class-name: org.postgresql.Driver
 
-  flyway:
-    enabled: true
-    baseline-on-migrate: true
-    locations: classpath:db/migration
-    validate-on-migrate: true
+  #flyway:
+  #  enabled: true
+  #  baseline-on-migrate: true
+  #  locations: classpath:db/migration
+  #  validate-on-migrate: true
 
   data:
     redis:

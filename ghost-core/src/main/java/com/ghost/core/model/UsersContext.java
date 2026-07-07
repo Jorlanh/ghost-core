@@ -1,37 +1,34 @@
 package com.ghost.core.model;
 
-import jakarta.persistence.*;
 import lombok.*;
-
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.mapping.Field;
 import java.time.LocalDateTime;
-import java.util.UUID;
 
-@Entity
-@Table(name = "users_context")
+@Document(collection = "users_context")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 public class UsersContext {
-
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
+    private String id;
 
-    @Column(name = "firebase_uid", unique = true, nullable = false)
+    @Field("firebase_uid")
     private String firebaseUid;
 
-    @Column(name = "nickname")
+    @Field("nickname")
     private String nickname;
 
-    @Column(name = "god_mode")
+    @Field("god_mode")
     @Builder.Default
     private Boolean godMode = false;
 
-    @Column(name = "last_interaction")
+    @Field("last_interaction")
     private LocalDateTime lastInteraction;
 
-    @Column(name = "created_at")
     @Builder.Default
+    @Field("created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
 }

@@ -1,47 +1,50 @@
 package com.ghost.core.model;
 
-import jakarta.persistence.*;
 import lombok.*;
-
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.mapping.Field;
 import java.time.LocalDateTime;
-import java.util.UUID;
 
-@Entity
-@Table(name = "intent_logs")
+@Document(collection = "intent_logs")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 public class IntentLog {
-    
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
+    private String id;
 
-    @Column(name = "firebase_uid", nullable = false)
+    @Field("firebase_uid")
     private String firebaseUid;
 
-    @Column(name = "command_text", nullable = false)
+    @Field("command_text")
     private String commandText;
 
-    @Column(name = "ai_response")
+    @Field("ai_response")
     private String aiResponse;
 
+    @Field("intent_category")
     private String intentCategory;
 
+    @Field("latency_ms")
     private Integer latencyMs;
 
+    @Field("tokens_used")
     private Integer tokensUsed;
 
     @Builder.Default
+    @Field("success")
     private Boolean success = true;
 
+    @Field("error_message")
     private String errorMessage;
 
     @Builder.Default
+    @Field("memory_stored")
     private Boolean memoryStored = false;
 
     @Builder.Default
-    @Column(name = "created_at")
+    @Field("created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
 }

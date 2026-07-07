@@ -1,58 +1,42 @@
 package com.ghost.core.model;
 
-import jakarta.persistence.*;
 import lombok.*;
-import org.hibernate.annotations.Array;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
-
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.mapping.Field;
 import java.time.LocalDateTime;
-import java.util.UUID;
 
-@Entity
-@Table(name = "ghost_memories")
+@Document(collection = "ghost_memories")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 public class GhostMemory {
-
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
+    private String id;
 
-    @Column(name = "firebase_uid", nullable = false)
+    @Field("firebase_uid")
     private String firebaseUid;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "firebase_uid", referencedColumnName = "firebase_uid", insertable = false, updatable = false)
-    private UsersContext user;
-
-    @Column(columnDefinition = "TEXT", nullable = false)
+    @Field("content")
     private String content;
 
-    /**
-     * Embedding opcional. O modo padrao usa memoria textual local;
-     * modelos de embedding locais podem preencher 768 dimensoes depois.
-     */
-    @JdbcTypeCode(SqlTypes.VECTOR)
-    @Array(length = 768)
-    @Column(name = "embedding", columnDefinition = "vector(768)", nullable = true)
+    // MongoDB armazena arrays nativamente
+    @Field("embedding")
     private float[] embedding;
 
     @Builder.Default
-    @Column(name = "importance_weight")
+    @Field("importance_weight")
     private Integer importanceWeight = 1;
 
-    @Column(name = "category")
+    @Field("category")
     private String category;
 
     @Builder.Default
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(columnDefinition = "jsonb", nullable = false)
+    @Field("metadata")
     private String metadata = "{}";
 
     @Builder.Default
-    @Column(name = "created_at")
+    @Field("created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
 }
