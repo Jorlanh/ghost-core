@@ -10,6 +10,7 @@ import com.ghost.core.service.AudioTranscriptionService;
 import com.ghost.core.service.OllamaClientService;
 import com.ghost.core.service.AgenticService; // INJEÇÃO DO MOTOR AUTÔNOMO
 import com.ghost.core.service.VisionService;
+import com.ghost.core.service.WorkspaceAgentService;
 import com.ghost.core.service.security.LocalCyberOpsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -47,8 +48,11 @@ public class GhostController {
     private final OllamaClientService ollamaClientService;
     private final VisionService visionService;
     private final LocalCyberOpsService cyberOpsService;
+    private final WorkspaceAgentService workspaceAgentService;
 
     public record InteractionRequest(String command, String uid, String clientSource) {}
+    public record GithubAnalyzeRequest(String githubUrl, String instruction) {}
+    public record BuildRequest(String instruction, String frontendStack, String backendStack, String databaseStack, String securityMode) {}
     private record CommandResult(String text, String osCommand) {}
 
     @GetMapping("/status")
@@ -66,7 +70,9 @@ public class GhostController {
                         "cyberOps", "defensive-only",
                         "selfHealing", true,
                         "voiceRouting", true,
-                        "memory", "postgres"
+                        "workspaceAgent", true,
+                        "fileUploads", "zip/pdf/docx/txt/code",
+                        "memory", "mongodb-local + postgres-compatible"
                 )
         ));
     }
@@ -91,6 +97,29 @@ public class GhostController {
     @GetMapping("/cyber/defensive-scan")
     public ResponseEntity<Map<String, Object>> defensiveScan(@RequestParam(value = "target", defaultValue = "127.0.0.1") String target) {
         return ResponseEntity.ok(cyberOpsService.defensiveSummary(target));
+    }
+
+    @PostMapping("/workspace/github")
+    public ResponseEntity<Map<String, Object>> analyzeGithub(@RequestBody GithubAnalyzeRequest request) {
+        return ResponseEntity.ok(workspaceAgentService.analyzeGithub(request.githubUrl(), request.instruction()));
+    }
+
+    @PostMapping(value = "/workspace/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Map<String, Object>> analyzeUpload(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "instruction", defaultValue = "Analise e corrija este material.") String instruction) {
+        return ResponseEntity.ok(workspaceAgentService.analyzeUpload(file, instruction));
+    }
+
+    @PostMapping("/workspace/build")
+    public ResponseEntity<Map<String, Object>> buildFromPrompt(@RequestBody BuildRequest request) {
+        return ResponseEntity.ok(workspaceAgentService.buildFromPrompt(
+                request.instruction(),
+                request.frontendStack(),
+                request.backendStack(),
+                request.databaseStack(),
+                request.securityMode()
+        ));
     }
 
     @PostMapping(value = "/interact/audio", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

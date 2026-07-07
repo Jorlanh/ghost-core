@@ -7,7 +7,6 @@ import java.io.File;
 import java.lang.management.ManagementFactory;
 import java.time.LocalDateTime;
 import java.util.Map;
-import static java.util.Map.entry; // Importação estática adicionada para o entry()
 import java.util.concurrent.CompletableFuture;
 
 @Service
@@ -42,21 +41,20 @@ public class SystemMaintenanceService {
         return report.toString();
     }
 
-    // Método refatorado para suportar N parâmetros utilizando Map.ofEntries e entry()
     public Map<String, Object> runDiagnosticsJson() {
         Runtime runtime = Runtime.getRuntime();
-        return Map.ofEntries(
-                entry("timestamp", LocalDateTime.now().toString()),
-                entry("projectRoot", PROJECT_ROOT),
-                entry("java", System.getProperty("java.version")),
-                entry("os", System.getProperty("os.name") + " " + System.getProperty("os.version")),
-                entry("uptimeMs", ManagementFactory.getRuntimeMXBean().getUptime()),
-                entry("cpuCores", runtime.availableProcessors()),
-                entry("freeMemoryMb", runtime.freeMemory() / 1024 / 1024),
-                entry("totalMemoryMb", runtime.totalMemory() / 1024 / 1024),
-                entry("maxMemoryMb", runtime.maxMemory() / 1024 / 1024),
-                entry("ollamaUrl", env("OLLAMA_BASE_URL", "http://localhost:11434")),
-                entry("voiceUrl", env("GHOST_VOICE_URL", "http://localhost:5001"))
+        return Map.of(
+                "timestamp", LocalDateTime.now().toString(),
+                "projectRoot", PROJECT_ROOT,
+                "java", System.getProperty("java.version"),
+                "os", System.getProperty("os.name") + " " + System.getProperty("os.version"),
+                "uptimeMs", ManagementFactory.getRuntimeMXBean().getUptime(),
+                "cpuCores", runtime.availableProcessors(),
+                "freeMemoryMb", runtime.freeMemory() / 1024 / 1024,
+                "totalMemoryMb", runtime.totalMemory() / 1024 / 1024,
+                "maxMemoryMb", runtime.maxMemory() / 1024 / 1024,
+                "ollamaUrl", env("OLLAMA_BASE_URL", "http://localhost:11434"),
+                "voiceUrl", env("GHOST_VOICE_URL", "http://localhost:5001")
         );
     }
 

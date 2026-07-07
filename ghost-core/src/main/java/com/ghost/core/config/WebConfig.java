@@ -13,5 +13,9 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addResourceHandler("/audio_cache/**")
                 .addResourceLocations("file:./audio_cache/")
                 .setCachePeriod(3600); // 1 hora de cache no browser
+
+        registry.addResourceHandler("/deliveries/**")
+                .addResourceLocations("file:./ghost_deliveries/")
+                .setCachePeriod(3600);
     }
 }

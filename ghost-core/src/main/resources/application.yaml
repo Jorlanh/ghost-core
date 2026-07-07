@@ -24,6 +24,13 @@ spring:
     redis:
       host: ${GHOST_REDIS_HOST:localhost}
       port: ${GHOST_REDIS_PORT:6379}
+    mongodb:
+      uri: ${GHOST_MONGODB_URI:mongodb://localhost:27017/ghost_db}
+
+  servlet:
+    multipart:
+      max-file-size: ${GHOST_MAX_UPLOAD_SIZE:200MB}
+      max-request-size: ${GHOST_MAX_REQUEST_SIZE:220MB}
 
   jpa:
     hibernate:
@@ -60,6 +67,9 @@ ghost:
     command: ${GHOST_STT_COMMAND:}
   vision:
     capture-screen-on-demand: ${GHOST_CAPTURE_SCREEN:true}
+  workspace:
+    root: ${GHOST_WORKSPACE_DIR:ghost_workspace}
+    deliveries: ${GHOST_DELIVERIES_DIR:ghost_deliveries}
 
 eureka:
   client:
